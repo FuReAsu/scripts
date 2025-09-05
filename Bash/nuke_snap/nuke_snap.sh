@@ -36,3 +36,6 @@ apt remove snapd -y
 echo "Masking the service and socket"
 systemctl mask snapd.service
 systemctl mask snapd.socket
+
+echo "Excluding snap from apt"
+apt-mark hold snapd
