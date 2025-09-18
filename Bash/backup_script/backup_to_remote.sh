@@ -2,7 +2,7 @@
 
 declare backup_server="backup.local"
 declare backup_user="backup-admin"
-
+declare now="[$(date +%D-%H:%m:%N)] --"
 declare dir
 
 if ! [ "$#" -eq 0 ]; then
@@ -12,34 +12,29 @@ else
 	exit 1
 fi
 
-declare -l confirm
-
-read -p "Confirm backup of $dir? [Y|n]: " confirm
-confirm="${confirm:=y}"
-
-
-if [ "$confirm" = "no" -o "$confirm" = "n" ]; then
-	echo "Exiting..."
-	exit 0
-fi
-
-if [ "$confirm" = "yes" -o "$confirm" = "y" ]; then
-	echo "Continuing..."
-fi
-
-declare file_name="/tmp/$(date +%Y%m%d-%H%M)-$(basename $dir).tar.gz"
+declare file_name="/tmp/$(date +%Y%m%d%H%M)-$(basename $dir).tar.gz"
 
 if ! [ -d "$dir" ]; then
-	echo "No such directory $dir. Exiting..."
+	echo "$now No such directory $dir. Exiting..."
 	exit 1
 else
-	echo "Compressing the directory into tar.gz"
-	tar -czvf $file_name $dir
+	echo "$now Compressing the directory into tar.gz"
+	tar -czvf $file_name $dir > /dev/null 2>&1
 fi
 
 if [ "$?" ]; then
-	scp $file_name $backup_user@$backup_server:~/backup
+	echo "$now Compressed $dir to $file_name"
+	echo "$now Copying $file_name to $backup_server using scp"
+	scp $file_name $backup_user@$backup_server:~/backup > /dev/null 2>&1
 else
-	echo "compressing file failed. Exiting..."
+	echo "$now Compressing file failed. Exiting..."
+	exit 1
+fi
+
+if [ "$?" ]; then
+	echo "$now Copied $file_name to $backup_server"
+	echo "$now Backup process successfully completed"
+else
+	echo "$now Copying $file_name to $backup_server failed"
 	exit 1
 fi
