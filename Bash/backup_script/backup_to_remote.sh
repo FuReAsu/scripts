@@ -2,7 +2,7 @@
 
 declare backup_server="backup.local"
 declare backup_user="backup-admin"
-declare now="[$(date +%D-%H:%m:%N)] --"
+declare now="[$(date +%D-%H:%M:%S)] --"
 declare dir
 
 if ! [ "$#" -eq 0 ]; then
