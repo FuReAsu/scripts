@@ -13,7 +13,7 @@ while true; do
 
 	read -p "#? -> " option
 
-	if [[ "$option" =~ ^([0-9]{1,2})$ ]] && [[ "$option" -le ${#contexts[@]} ]]; then
+	if [[ "$option" -gt 0 ]] && [[ "$option" =~ ^([0-9]{1,2})$ ]] && [[ "$option" -le ${#contexts[@]} ]]; then
 		break
 	else
 		echo "invalid input"
