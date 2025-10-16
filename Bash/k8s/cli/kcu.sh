@@ -16,7 +16,7 @@ while true; do
 	if [[ "$option" -gt 0 ]] && [[ "$option" =~ ^([0-9]{1,2})$ ]] && [[ "$option" -le ${#contexts[@]} ]]; then
 		break
 	else
-		echo "invalid input"
+		echo "Invalid input. Please enter numbers between 1 and ${#contexts[@]}..."
 	fi
 	
 done
