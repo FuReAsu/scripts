@@ -1,6 +1,6 @@
 #!/bin/bash
 
-file=$(find . | grep -E "main\/resources\/application.(yml|yaml)")
+file=$(find . | grep -E "main\/resources\/application.(yml|yaml)" || true)
 
 if ! [ -f "$file" ]; then
   echo "No application.yml found. Skipping..."
@@ -43,7 +43,7 @@ print_findings apiKeys API-Keys
 mapfile -t tokens < <(grep -iE "(token)[:=]\s[a-zA-Z0-9=_-]{16,}" "$file")
 print_findings tokens Tokens 
 
-mapfile -t dburis < <(grep -iE "uri:.*://.*:.*@.*:\d+*" "$file")
+mapfile -t dburis < <(grep -iE "(mysql|postgresql|mongodb|redis|jdbc)://[^:]+:[^@]+@" "$file")
 print_findings dburis DB-URIs
 
 if ! $pass; then
