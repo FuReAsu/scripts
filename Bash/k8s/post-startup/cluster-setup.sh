@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #post-startup kubernetes cluster setup
 
-CALICO_VERSION="${CALICO_VERSION:-v3.31}"
+CALICO_VERSION="${CALICO_VERSION:-v3.31.3}"
 
 declare WHITE="\033[0m" #white
 declare RED="\033[1;31m" #red
@@ -93,12 +93,12 @@ label_nodes() {
 install_calico() {
 
 	if (kubectl -n kube-system  rollout status deployments calico-kube-controllers > /dev/null); then
-		log success "Calico already exists"
+		log success "Calico controller is ready"
 		return 0
 	fi
 
 	log progress "Getting latest calico manifest to $temp_path/calico.yml"
-	curl -fsS https://raw.githubusercontent.com/projectcalico/calico/refs/heads/release-${CALICO_VERSION}/manifests/calico.yaml --output $temp_path/calico.yml
+	curl -fsS https://raw.githubusercontent.com/projectcalico/calico/${CALICO_VERSION}/manifests/calico.yaml --output $temp_path/calico.yml
 	if [ "$?" -eq 0 ]; then
 		log progress "Installing calico"
 		kubectl apply -f /tmp/calico.yml
@@ -116,13 +116,10 @@ install_calico() {
 		log success "Calico controller is ready"
 		return 0
 	fi
-
-	log failure "Calico controller is not ready, setup is on hold"
-	exit 1
 }
 
 setup_networks() {
-	if (kubectl get ippool --no-headers -o custom-columns=":.metadata.name" | grep -v "default"); then
+	if (kubectl get ippool --no-headers -o custom-columns=":.metadata.name" | grep -v "default" > /dev/null); then
 		log success "Ippools already created"
 		return 0
 	fi
@@ -134,6 +131,8 @@ setup_networks() {
 			continue
 		fi
 		current_cidr=$(kubectl get nodes $node --no-headers -o custom-columns=':.spec.podCIDRs[0]')
+		IFS="/" read -ra cidr <<< "$current_cidr"
+		blockSize="${cidr[1]}"
 		cat <<EOF >> $temp_path/calico_ippools.yaml
 apiVersion: crd.projectcalico.org/v1
 kind: IPPool
@@ -144,7 +143,7 @@ spec:
   - Workload
   - Tunnel
   cidr: ${current_cidr}
-  blockSize: 24
+  blockSize: ${blockSize}
   ipipMode: Always
   natOutgoing: true
   nodeSelector: 'kubernetes.io/hostname == "$node"'
@@ -164,9 +163,28 @@ EOF
 	fi
 }
 
+install_metrics() {
+	if (kubectl -n kube-system rollout status deployments metrics-server > /dev/null); then
+		log success "Metrics server is ready"
+		return 0
+	fi
+	log progress "Getting metrics-server helm repo"
+	set -e; helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/; set +e
+	set -e; helm upgrade --install metrics-server metrics-server/metrics-server --namespace kube-system --set "args={--kubelet-insecure-tls}"; set +e
+	log progress "Checking metrics server status"
+	if ! (kubectl -n kube-system rollout status deployments metrics-server ); then
+		log failure "Metrics server is still not ready"
+		exit 1
+	else
+		log success "Metrics server is ready"
+		return 0
+	fi
+}
+
 profile_full() {
 	install_calico
 	setup_networks
+	install_metrics
 }
 
 profile_minimal() {
