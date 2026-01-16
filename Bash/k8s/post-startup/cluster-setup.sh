@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 #post-startup kubernetes cluster setup
 
+#envars
 CALICO_VERSION="${CALICO_VERSION:-v3.31.3}"
+METALLB_VIP_RANGE=${METALLB_VIP_RANGE}
 
 declare WHITE="\033[0m" #white
 declare RED="\033[1;31m" #red
 declare GREEN="\033[1;32m" #green
 declare YELLOW="\033[1;33m" #yellow
 
-declare temp_path="/tmp"
+declare temp_path="/tmp/cluster-setup"
 declare help_message="------------------------------------------------------------
 ⚓ post-startup kubernetes setup script ⚓
 Please provide --profile flag with the following values
@@ -83,16 +85,19 @@ check_args() {
 }
 
 label_nodes() {
-	log progress "Labeling worker nodes if not already done"
-	local -a nodes=($(kubectl get nodes --no-headers -o custom-columns="Name:.metadata.name"))
+	local -a nodes=($(kubectl get nodes --no-headers -o custom-columns="Name:.metadata.name" | grep -vE "control|master"))
 	for node in "${nodes[@]}"; do
-		grep "control-plane" -v <<< "$node" > /dev/null && kubectl label nodes $node node-role.kubernetes.io/worker=
+		if ! (kubectl get nodes $node -o custom-columns=":.metadata.labels" | grep "node-role" > /dev/null); then
+			kubectl label nodes $node node-role.kubernetes.io/worker=
+		else
+			log success "Worker node $node is already labeled"		
+		fi
 	done
 }
 
 install_calico() {
 
-	if (kubectl -n kube-system  rollout status deployments calico-kube-controllers > /dev/null); then
+	if (kubectl -n kube-system  rollout status deployments calico-kube-controllers > /dev/null 2>&1); then
 		log success "Calico controller is ready"
 		return 0
 	fi
@@ -119,7 +124,7 @@ install_calico() {
 }
 
 setup_networks() {
-	if (kubectl get ippool --no-headers -o custom-columns=":.metadata.name" | grep -v "default" > /dev/null); then
+	if (kubectl get ippool --no-headers -o custom-columns=":.metadata.name" | grep -v "default" > /dev/null 2>&1); then
 		log success "Ippools already created"
 		return 0
 	fi
@@ -164,7 +169,7 @@ EOF
 }
 
 install_metrics() {
-	if (kubectl -n kube-system rollout status deployments metrics-server > /dev/null); then
+	if (kubectl -n kube-system rollout status deployments metrics-server > /dev/null 2>&1); then
 		log success "Metrics server is ready"
 		return 0
 	fi
@@ -172,7 +177,7 @@ install_metrics() {
 	set -e; helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/; set +e
 	set -e; helm upgrade --install metrics-server metrics-server/metrics-server --namespace kube-system --set "args={--kubelet-insecure-tls}"; set +e
 	log progress "Checking metrics server status"
-	if ! (kubectl -n kube-system rollout status deployments metrics-server ); then
+	if ! (kubectl -n kube-system rollout status deployments metrics-server); then
 		log failure "Metrics server is still not ready"
 		exit 1
 	else
@@ -181,17 +186,102 @@ install_metrics() {
 	fi
 }
 
+install_metallb() {
+	if (kubectl -n metallb-system rollout status deployments metallb-controller > /dev/null 2>&1); then
+		log success "Metallb controller is ready"
+		return 0
+	fi
+	set -e; helm repo add metallb https://metallb.github.io/metallb; set +e
+	set -e; helm upgrade --install metallb metallb/metallb --set tolerateMaster=false --namespace metallb-system --create-namespace; set +e
+	log progress "Checking metallb controller status"
+	if ! (kubectl -n metallb-system rollout status deployments metallb-controller > /dev/null); then
+		log failure "Metallb controller is still not ready"
+		exit 1
+	else
+		log success "Metallb controller is ready"
+		return 0
+	fi
+}
+
+setup_metallb() {
+	kubectl get ipaddresspools.metallb.io --no-headers -n metallb-system | grep pool > /dev/null 2>&1 && \
+		kubectl get l2advertisements.metallb.io --no-headers -n metallb-system | grep pool > /dev/null 2>&1 && \
+		log success "Metallb IPAddressPool and L2Advertisement already exists" && return 0
+
+	if [ -z ${METALLB_VIP_RANGE+true} ]; then
+		log progress "Using virtual IP range from \$METALLB_VIP_LIST"
+	else
+		log progress "Auto selecting virtual IP range from node IPs"
+		IFS="." read -ra IP <<< $(kubectl get nodes --no-headers -o custom-columns="IP:.status.addresses[0].address" | head -n 1)
+		METALLB_VIP_RANGE="${IP[0]}.${IP[1]}.${IP[2]}.200-${IP[0]}.${IP[1]}.${IP[2]}.250"
+	fi
+		log progress "Generating metallb manifests in $temp_path/metallb_ip_l2.yml"
+	cat <<EOF > $temp_path/metallb_ip_l2.yaml
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: default-pool
+  namespace: metallb-system
+spec:
+  addresses:
+    - "${METALLB_VIP_RANGE}"
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: default-pool-l2a
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+    - default-pool
+EOF
+	log progress "Applying metallb manifests"
+	kubectl apply -f $temp_path/metallb_ip_l2.yaml -n metallb-system
+	if [ "$?" -eq 0 ]; then
+		log success "Metallb IPAddressPool and L2Advertisement created"
+		return 0
+	else
+		log failure "Metallb IPAddressPool and L2Advertisement creation failed"
+	fi
+}
+
+install_istio() {
+	if (kubectl -n istio-system rollout status deployments istiod > /dev/null 2>&1); then
+		log success "Istio control plane is ready"
+		return 0
+	fi
+	log process "Installing istio with istioctl"
+	set -e; istioctl install --namespace istio-system --set profile=default -y; set +e
+}
+
+cleanup() {
+	if [ -d "$temp_path" ]; then
+		log progress "Cleaning up the temp directory at $temp_path"
+		set -e; rm -rf $temp_path; set +e
+		log success "$temp_path deleted"
+	fi
+}
+
 profile_full() {
 	install_calico
 	setup_networks
 	install_metrics
+	install_metallb
+	setup_metallb
+	install_istio
+	cleanup
 }
 
 profile_minimal() {
-	echo "minimal"
+	install_metrics
+	install_metallb
+	setup_metallb
+	install_istio
+	cleanup
 }
 
 main() {
+	mkdir -p $temp_path
 	check_args "$@"
 	local option="$2"
 	check_tools
@@ -205,6 +295,7 @@ main() {
 			profile_minimal
 			;;
 		esac
+	log success "Cluster-setup script exited"
 }
 
 main "$@"
