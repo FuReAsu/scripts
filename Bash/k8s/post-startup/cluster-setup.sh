@@ -14,8 +14,8 @@ declare temp_path="/tmp/cluster-setup"
 declare help_message="------------------------------------------------------------
 ⚓ post-startup kubernetes setup script ⚓
 Please provide --profile flag with the following values
-🚀 full (calico, metrics-server, metallb, istio, longhorn)
-🚀 minimal (metrics-server, metallb, istio)"
+🚀 full (calico, metrics-server, metallb, istio)
+🚀 minimal (metrics-server, metallb)"
 
 declare available_options=("full" "minimal")
 
@@ -85,7 +85,7 @@ check_args() {
 }
 
 label_nodes() {
-	local -a nodes=($(kubectl get nodes --no-headers -o custom-columns="Name:.metadata.name" | grep -vE "control|master"))
+	local -a nodes=($(kubectl get nodes --no-headers -o custom-columns="Name:.metadata.name,Label:.metadata.labels" | grep -vE "control-plane" | awk -F ' ' '{ print $1 }'))
 	for node in "${nodes[@]}"; do
 		if ! (kubectl get nodes $node -o custom-columns=":.metadata.labels" | grep "node-role" > /dev/null); then
 			kubectl label nodes $node node-role.kubernetes.io/worker=
@@ -106,7 +106,7 @@ install_calico() {
 	curl -fsS https://raw.githubusercontent.com/projectcalico/calico/${CALICO_VERSION}/manifests/calico.yaml --output $temp_path/calico.yml
 	if [ "$?" -eq 0 ]; then
 		log progress "Installing calico"
-		kubectl apply -f /tmp/calico.yml
+		kubectl apply -f $temp_path/calico.yml
 		sleep 5
 	else
 		log failure "Getting calico manifest failed. Try again"
@@ -276,7 +276,6 @@ profile_minimal() {
 	install_metrics
 	install_metallb
 	setup_metallb
-	install_istio
 	cleanup
 }
 
