@@ -192,9 +192,9 @@ install_metallb() {
 		return 0
 	fi
 	set -e; helm repo add metallb https://metallb.github.io/metallb; set +e
-	set -e; helm upgrade --install metallb metallb/metallb --set tolerateMaster=false --namespace metallb-system --create-namespace; set +e
+	set -e; helm upgrade --install metallb metallb/metallb --set speaker.tolerateMaster=false --namespace metallb-system --create-namespace; set +e
 	log progress "Checking metallb controller status"
-	if ! (kubectl -n metallb-system rollout status deployments metallb-controller > /dev/null); then
+	if ! (kubectl -n metallb-system rollout status deployments metallb-controller); then
 		log failure "Metallb controller is still not ready"
 		exit 1
 	else
