@@ -15,9 +15,10 @@ declare help_message="----------------------------------------------------------
 ⚓ post-startup kubernetes setup script ⚓
 Please provide --profile flag with the following values
 🚀 full (calico, metrics-server, metallb, istio)
+🚀 kind (metrics-server, metallb, istio)
 🚀 minimal (metrics-server, metallb)"
 
-declare available_options=("full" "minimal")
+declare available_options=("full" "minimal" "kind")
 
 log() {
 	case "$1" in
@@ -279,6 +280,14 @@ profile_minimal() {
 	cleanup
 }
 
+profile_kind() {
+	install_metrics
+	install_metallb
+	setup_metallb
+	install_istio
+	cleanup
+}
+
 main() {
 	mkdir -p $temp_path
 	check_args "$@"
@@ -291,6 +300,9 @@ main() {
 			profile_full
 			;;
 		kind)
+			profile_kind
+			;;
+		minimal)
 			profile_minimal
 			;;
 		esac
